@@ -1,0 +1,603 @@
+---
+title: "Practium_II"
+author: "Venkata Sai Manikanata Buddha-001571642"
+date: "17/08/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+#TEAM MEMBERS:
+
+1) RAM SAI SUPRAJEETH B(001560728); email: balabhadruni.s@northeastern.edu
+2) VENKATA SAI MANIKANTA BUDDHA(001571642); email:buddha.v@northeastern.edu
+
+
+Part 1 (40 pts) Load XML
+In Part 1 you create a normalized relational OLTP database and populate 
+it with data from an XML document. In Part 2 you will add to the normalized 
+schema fact tables and turn the normalized schema into a denormalized schema 
+suitable for OLAP. In Part 3 you'll use the OLAP star/snowflake schema to do 
+some (simple) data mining.
+
+(5 pts) Create a normalized relational schema that contains minimally the 
+following entities: Article, Journal, Author, History. Use the XML document 
+to determine the appropriate attributes (fields/columns) for the entities 
+(tables). While there may be other types of publications in the XML, you only 
+need to deal with articles in journals. Create appropriate primary and foreign 
+keys. Where necessary, add surrogate keys. Include an image of an ERD showing
+your model in your R Notebook.
+
+
+
+![ERD DIAGARAM](C:/Users/Dinesh/Downloads/Practium-2.JPEG)
+
+
+
+(30 pts) Extract and transform the data from the XML and then load into the 
+appropriate tables in the database. You cannot (directly and solely) use 
+xmlToDataFrame but instead must parse the XML node by node using a combination 
+of node-by-node tree traversal and XPath. It is not feasible to use XPath to 
+extract all journals, then all authors, etc. as some are missing and won't 
+match up. You will need to iterate through the top-level nodes. While 
+outside the scope of the course, this task could also be done through XSLT.
+
+
+
+
+```{r}
+
+library(XML)
+library(RSQLite)
+library(dplyr)
+library(DBI)
+library(knitr)
+library(RMySQL)
+
+db_user <- 'root'
+db_password <- 'password'
+db_name <- 'db'
+db_port<-3306
+db_host<-'localhost'
+db <-  dbConnect(MySQL(), user = db_user, password = db_password,
+                 dbname = db_name, host = db_host, port = db_port)
+dbGetQuery(db,"SHOW GLOBAL VARIABLES LIKE 'local_infile'")
+dbGetQuery(db,"SET GLOBAL local_infile = TRUE")
+```
+
+```{r}
+path <- "D:/IDMP WORKSPACE/Project/DBMS/"
+fn <- "pubmed_sample.xml"
+fpn = paste0(path, fn)
+```
+
+
+(5 pts) Realize the relational schema in SQLite (place the CREATE TABLE 
+statements into SQL chunks in your R Notebook).
+
+
+```{sql , connection=db}
+DROP TABLE IF EXISTS journal;
+```
+
+```{sql , connection=db}
+DROP TABLE IF EXISTS article;
+```
+
+```{sql , connection=db}
+DROP TABLE IF EXISTS author;
+```
+
+```{sql , connection=db}
+DROP TABLE IF EXISTS history;
+```
+
+##TABLES CREATION
+```{sql Author Table, connection=db}
+CREATE TABLE author(
+Auid INTEGER PRIMARY KEY,
+LastNAME TEXT,
+FirstName TEXT,
+Initial Text
+);
+```
+
+```{sql Article Table, connection=db}
+CREATE TABLE article(
+Aid INTEGER PRIMARY KEY,
+TITLE TEXT
+);
+```
+
+```{sql History Table, connection=db}
+CREATE TABLE history(
+Hid INTEGER PRIMARY KEY,
+RecievedMonth TEXT,
+RecievedYear DATE,
+AcceptedDateMonth TEXT,
+AcceptedDateYear DATE,
+entrezDateMonth TEXT,
+entrezDateYear DATE,
+PubmedDateMonth TEXT,
+PubmedDateYear DATE,
+MedlineDateMonth TEXT,
+MedlineDateYear DATE
+);
+
+```
+
+```{sql Journal Table, connection=db}
+CREATE TABLE journal(
+Id INTEGER PRIMARY KEY,
+ISSN INTEGER NOT NULL,
+VOLUME INTEGER,
+ISSUE INTEGER,
+Year DATE,
+Month TEXT,
+Aid INTEGER,
+Auid INTEGER,
+Hid INTEGER,
+FOREIGN KEY(Aid) REFERENCES Article(Aid),
+FOREIGN KEY(Auid) REFERENCES Author(Auid),
+FOREIGN KEY(Hid) REFERENCES History(Hid)
+);
+```
+
+```{r}
+# Reading the XML file and parse into DOM
+xmlDOM <- xmlParse(file = fpn)
+
+# get the root node of the DOM tree
+xmlRoot <- xmlRoot(xmlDOM)
+
+xmlName(xmlRoot)
+```
+
+```{r}
+
+size <- xmlSize(xmlRoot)
+
+Author <- data.frame(Auid = integer(),
+                     LastName = character(),
+                     FirstName = character(),
+                     Initial = character(),
+                     stringsAsFactors = FALSE)
+
+History <- data.frame(Hid = integer(),
+                      ISSN = integer(),
+                      RecievedMonth = character(),
+                      RecievedYear = integer(),
+                      AcceptedDateMonth = character(),
+                      AcceptedDateYear = integer(),
+                      entrezDateMonth = character(),
+                      entrezDateYear = integer(),
+                      PubmedDateMonth = character(),
+                      PubmedDateYear = integer(),
+                      MedlineDateMonth = character(),
+                      MedlineDateYear = integer(),
+                      stringsAsFactors = FALSE)
+
+Article <- data.frame(Aid = integer(),
+                      Title = character(),
+                      stringsAsFactors = FALSE)
+
+Journal <- data.frame(Id = integer(),
+                      ISSN = integer(),
+                      Volume = integer(),
+                      Issue = integer(),
+                      Year = integer(),
+                      Month = character(),
+                      Aid = integer(),
+                      LastName = character(),
+                      FirstName = character(),
+                      Initial = character(),
+                      Auid = integer(),
+                      Hid = integer(),
+                      stringsAsFactors = FALSE)
+
+
+
+
+   
+k<-1
+
+
+for(i in 1:size)
+{
+
+  
+  ##Journal node
+  jrnlnode <- xmlRoot[[i]]
+  journalnode <- "./MedlineCitation/Article/Journal"
+  journalissuenode <- "./MedlineCitation/Article/Journal/JournalIssue"
+  journaldatenode <- "./MedlineCitation/Article/Journal/JournalIssue/PubDate"
+  
+  jnode <- xpathApply(jrnlnode,journalnode)
+  issuenode <- xpathApply(jrnlnode,journalissuenode)
+  datenode <- xpathApply(jrnlnode,journaldatenode)
+  
+  ##Author node
+  authnode <- xmlRoot[[i]]
+  authorNode <-"./MedlineCitation/Article/AuthorList/Author"
+  xauth <- xpathApply(authnode,authorNode) 
+  
+  
+  for(j in 1:xmlSize(xauth))
+  {
+    ##Journal Details
+    ISSN <- xmlValue(jnode[[1]][[1]])
+  
+    Volume <- xmlValue(issuenode[[1]][[1]])
+    Issue <- xmlValue(issuenode[[1]][[2]])
+  
+   if(xmlName(datenode[[1]][[1]])!= 'Year')
+   {
+   Year <- xmlValue(datenode[[1]][[1]])
+   Month <- xmlValue(datenode[[1]][[1]])
+   }
+   Year <- xmlValue(datenode[[1]][[1]])
+   Month <- xmlValue(datenode[[1]][[2]])
+    
+    
+   ##Authors details
+    author <- xauth[[j]]
+    LastName <- xmlValue(author[[1]])
+    FirstName <- xmlValue(author[[2]])
+    Initial <- xmlValue(author[[3]])
+    if (length(Initial) == 0)
+      Initial <- ""
+    
+
+    Author[k,2] <- LastName
+    Author[k,3] <- FirstName
+    Author[k,4] <- Initial
+    
+   Journal[k,2] <- ISSN
+   Journal[k,3] <- Volume
+   Journal[k,4] <- Issue
+   Journal[k,5] <- Year
+   Journal[k,6] <- Month
+   Journal[k,7] <- i
+   Journal[k,8] <- LastName
+   Journal[k,9] <- FirstName
+   Journal[k,10] <- Initial
+     k <- k+1
+  }
+}
+
+    
+
+```
+
+
+```{r}
+
+
+c <- 1
+
+for(i in 1:size)
+{
+
+  
+  ##History node
+  histrynode <- xmlRoot[[i]]
+  historynode <- "//History"
+  hnode <- xpathApply(histrynode,historynode)
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='received']/Year"
+  RecievedYear <- xpathSApply(histrynode,xpathex,xmlValue)
+  if (length(RecievedYear) == 0)
+      RecievedYear <- ""
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='received']/Month"
+  RecievedMonth <- xpathSApply(histrynode,xpathex,xmlValue)
+    if (length(RecievedMonth) == 0)
+      RecievedMonth <- ""
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='accepted']/Year"
+  AcceptedDateYear <- xpathSApply(histrynode,xpathex,xmlValue)
+    if (length(AcceptedDateYear) == 0)
+      AcceptedDateYear <- ""
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='accepted']/Month"
+  AcceptedDateMonth <- xpathSApply(histrynode,xpathex,xmlValue)
+    if (length(AcceptedDateMonth) == 0)
+      AcceptedDateMonth <- ""
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='entrez']/Year"
+  entrezDateYear <- xpathSApply(histrynode,xpathex,xmlValue)
+
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='entrez']/Month"
+  entrezDateMonth <- xpathSApply(histrynode,xpathex,xmlValue)
+
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='pubmed']/Year"
+  PubmedDateYear <- xpathSApply(histrynode,xpathex,xmlValue)
+
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='pubmed']/Month"
+  PubmedDateMonth <- xpathSApply(histrynode,xpathex,xmlValue)
+
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='medline']/Year"
+  MedlineDateYear <- xpathSApply(histrynode,xpathex,xmlValue)
+
+  
+  xpathex <- "PubmedData/History/PubMedPubDate[@PubStatus='medline']/Month"
+  MedlineDateMonth <- xpathSApply(histrynode,xpathex,xmlValue)
+  
+  
+  
+  xpathex <- "./MedlineCitation/Article/Journal/ISSN"
+  ISSN <- xpathSApply(histrynode,xpathex,xmlValue)
+  
+  History[c,2] <- ISSN
+  History[c,3] <- RecievedMonth
+  History[c,4] <- RecievedYear
+  History[c,5] <- AcceptedDateMonth
+  History[c,6] <- AcceptedDateYear
+  History[c,7] <- entrezDateMonth
+  History[c,8] <- entrezDateYear
+  History[c,9] <- PubmedDateMonth
+  History[c,10] <- PubmedDateYear
+  History[c,11] <- MedlineDateMonth
+  History[c,12] <- MedlineDateYear
+  
+
+
+  ##Article node for Title
+  artnode <- xmlRoot[[i]]
+  artclnode <- "./MedlineCitation/Article/ArticleTitle"
+  Title <- xpathApply(artnode,artclnode,xmlValue)
+  
+  Article[c,2] <- Title
+  c <- c+1
+  
+}
+
+```
+
+
+
+```{r ,Foreignkeys, echo=FALSE}
+Journal$Id <- seq(0+nrow(Journal))
+History$Hid <- seq(0+nrow(History))
+Author <-Author[!duplicated(Author), ]
+Author$Auid <- seq(0+nrow(Author))
+Article$Aid <- seq(0+nrow(Article))
+
+for(i in 1:nrow(Journal))
+{
+  if(is.na(Journal$Month[i]))
+  {
+    Journal$Month[i] <- substring(Journal$Year[i],first = 6,last=8)
+    x <- substring(Journal$Year[i],first = 0,last= 4)
+    Journal$Year[i] <- x
+    }
+}
+
+for(i in 1:nrow(Journal))
+{
+  a <- History$Hid[which(Journal$ISSN[i] == History$ISSN)]
+  
+ Journal$Hid[i] <- a
+}
+
+
+
+for(i in 1:nrow(Journal))
+{
+  b <- Author$Auid[which(Journal$LastName[i] == Author$LastName &
+                         Journal$FirstName[i] == Author$FirstName &
+                         Journal$Initial[i] == Author$Initial)
+                         ]
+
+  Journal$Auid[i] <- b
+}
+
+
+for(i in 1:nrow(Journal) )
+{
+  if(Journal$Hid[i] == 12)
+  {
+    Journal$Month[i] <- 'Mar'
+  }
+}
+
+Journal$Month <- match(Journal$Month,month.abb)
+
+Journal <- select(Journal,-8,-9,-10)
+
+History <- select(History, -2)
+
+```
+
+
+(30 pts) Extract and transform the data from the XML and then load into the 
+appropriate tables in the database. You cannot (directly and solely) use 
+xmlToDataFrame but instead must parse the XML node by node using a combination 
+of node-by-node tree traversal and XPath. It is not feasible to use XPath to 
+extract all journals, then all authors, etc. as some are missing and won't 
+match up. You will need to iterate through the top-level nodes. While 
+outside the scope of the course, this task could also be done through XSLT.
+
+
+```{sql, connection=db}
+set foreign_key_checks = 1;
+```
+
+```{r}
+dbWriteTable(db, "journal",Journal, overwrite = T,row.names = F)
+dbWriteTable(db, "history",History, overwrite = T,row.names = F)
+dbWriteTable(db, "article",Article, overwrite = T,row.names = F)
+dbWriteTable(db, "author",Author, overwrite = T,row.names = F)
+
+
+```
+
+##Checking our Loaded Tables.
+```{sql connection=db}
+select * from Author limit 5;
+```
+
+```{sql connection=db}
+select * from Article limit 5;
+```
+
+```{sql connection=db}
+select * from History limit 5;
+```
+
+```{sql connection=db}
+select * from Journal limit 5;
+```
+Part 2 (40 pts) Create Star/Snowflake Schema
+(20 pts) Create and populate a star schema with dimension and transaction 
+fact tables. Each row in the fact table will represent one article fact. 
+Include the image of an updated ERD that contains the fact table and any 
+additional required dimension tables. Populate the star schema in R. When 
+building the schema, look a head to Part 3 as the schema is dependent on 
+the eventual OLAP queries.
+
+![Fact table to find the number of articles written by each author.](C:/Users/Dinesh/Downloads/Fact-1.JPEG)
+
+
+
+```{sql connection=db}
+CREATE SCHEMA IF NOT EXISTS starschema;
+```
+
+```{sql connection=db}
+USE starschema;
+
+```
+##drop the tables if they already exist
+```{sql connection=db}
+
+DROP TABLE IF EXISTS starschema.JournalFact;
+```
+
+```{sql connection=db}
+DROP TABLE IF EXISTS starschema.AuthorDim;
+```
+
+```{sql connection=db}
+DROP TABLE IF EXISTS starschema.ArticleDim;
+```
+
+```{sql connection=db}
+DROP TABLE IF EXISTS starschema.DateDim;
+```
+
+```{sql connection=db}
+CREATE TABLE starschema.AuthorDim AS SELECT Auid AS Auid_dim_key,
+LastName,FirstName,Initial FROM db.Author;
+```
+
+```{sql connection=db}
+CREATE TABLE starschema.ArticleDim   AS SELECT Aid AS Aid_dim_key,Title 
+FROM db.Article;
+```
+
+```{sql connection=db}
+CREATE TABLE starschema.DateDim(datetimedim_key int NOT NULL AUTO_INCREMENT PRIMARY KEY,  
+Year Text,  Month double,quarter_of_year INT);
+```
+
+```{sql connection=db}
+INSERT INTO starschema.DateDim (Year,Month,quarter_of_year)    
+SELECT DISTINCT Year,Month,   
+CASE
+  WHEN Month < 4 THEN 1      
+  WHEN Month < 7 THEN 2       
+  WHEN Month < 10 THEN 3      
+  ELSE 4     
+  END
+FROM db.Journal;
+```
+
+```{sql connection=db}
+CREATE TABLE starschema.JournalFact (Auid_dim_key INT,Aid_dim_key INT,
+datetimedim_key INT,Article_Count INT,
+CONSTRAINT PRIMARY KEY (Auid_dim_key,Aid_dim_key,datetimedim_key));
+```
+
+```{sql connection=db}
+INSERT INTO starschema.JournalFact 
+SELECT e.Auid,e.Aid,dtd.datetimedim_key,COUNT(DISTINCT e.Aid)  FROM db.Journal e   
+JOIN starschema.DateDim dtd ON dtd.Year = e.Year GROUP BY e.Auid;
+```
+
+##Analytic Problem results
+
+```{sql connection=db}
+SELECT e.Auid,e.Aid,dtd.datetimedim_key,COUNT(DISTINCT e.Aid)  FROM db.Journal e   
+JOIN starschema.DateDim dtd ON dtd.Year = e.Year GROUP BY e.Auid;
+
+```
+
+(20 pts) In the same schema as the previous step, create and populate a 
+summary fact table or revise the previously created fact table that 
+represents number of articles per time period (quarter, year) by author 
+and by journal. Include the image of an updated ERD that contains the fact 
+table. Populate the fact table in R. When building the schema, look a head to 
+Part 3 as the schema is dependent on the eventual OLAP queries.
+
+![Fact table for finding the count of articles in a certain time period with respect to author and journal](C:/Users/Dinesh/Downloads/Fact-2.JPEG)
+
+
+```{sql connection=db}
+
+DROP TABLE IF EXISTS starschema.JournalFact;
+```
+
+```{sql connection=db}
+CREATE TABLE starschema.JournalFact (Auid_dim_key INT,Aid_dim_key INT,
+datetimedim_key INT,NumberofArticles INT,
+CONSTRAINT PRIMARY KEY (Auid_dim_key,Aid_dim_key,datetimedim_key));
+```
+
+```{sql connection=db}
+INSERT INTO starschema.JournalFact
+SELECT Auid,Aid,datetimedim_key,COUNT(distinct Aid)  FROM db.Journal  
+JOIN DateDim USING (Year)  GROUP BY Year,Auid,ISSN;
+
+```
+
+##Analytic Problem results
+
+```{sql connection=db}
+SELECT Auid,Aid,datetimedim_key,COUNT(distinct Aid)  
+FROM db.Journal  JOIN DateDim USING (Year)  GROUP BY Year,Auid,ISSN;
+
+```
+
+Part 3 (20 pts) Explore and Mine Data
+
+(20 pts) Write queries using your data warehouse to explore whether 
+the publications show a seasonal pattern. For example, create a line 
+graph that shows the number of publications for all journals each quarter 
+or the average number of days between submission and publication. If necessary, 
+adjust your fact table(s) as needed to support your new queries. If you need to 
+update the fact table, document your changes and your reasons why the changes 
+are needed.
+
+```{r}
+query = "SELECT e.Year,quarter_of_year, COUNT(DISTINCT Aid) as count FROM db.Journal e JOIN DateDim dtd USING (Month)  GROUP BY e.Year,quarter_of_year"
+
+df <- dbGetQuery(db,query)
+
+library(ggplot2)
+
+ggplot(df,mapping = aes(x=Year,y=count)) + geom_col() + 
+  facet_wrap(~quarter_of_year)+
+    labs(title="Articles published for all Journals in each quarter",
+        x="Years",y="Number of Articles")
+```
+
+##SCREENSHOT
+
+![STAR SCHEMA WITH TABLES Details](C:/Users/Dinesh/Downloads/StarSchema.JPG)
+
+![STAR SCHEMA WITH TABLES](C:/Users/Dinesh/Downloads/Schema.JPG)
+
